@@ -1,0 +1,92 @@
+
+#include <application.h>
+
+
+static bc_tag_temperature_t temperature_tag;
+
+struct { bool valid; float value; } temperature;
+float set_temperature = 21.5f;
+
+// TODO: how to get application_task taskID?
+bc_scheduler_task_id_t task_id_application = 0;
+
+void temperature_tag_event_handler(bc_tag_temperature_t *self, bc_tag_temperature_event_t event, void *event_param)
+{
+    (void) event;
+    (void) event_param;
+
+    temperature.valid = bc_tag_temperature_get_temperature_celsius(self, &temperature.value);
+
+    if (temperature.valid)
+    {
+        bc_radio_pub_thermometer(&temperature.value);
+
+        uint16_t relay_output = (temperature.value < set_temperature) ? 1 : 0;
+        bc_radio_pub_push_button(&relay_output);
+    }
+}
+
+void encoder_event_handler(bc_module_encoder_event_t event, void *param)
+{
+    (void)param;
+
+    if (event == BC_MODULE_ENCODER_EVENT_ROTATION)
+    {
+        set_temperature += bc_module_encoder_get_increment() * 0.1f;
+        bc_scheduler_plan_now(task_id_application);
+    }
+    else if(event == BC_MODULE_ENCODER_EVENT_CLICK)
+    {
+        static uint16_t event_counter = 0;
+        event_counter++;
+        bc_radio_pub_push_button(&event_counter);
+    }
+    else if(event == BC_MODULE_ENCODER_EVENT_HOLD)
+    {
+        bc_radio_enroll_to_gateway();
+    }
+}
+
+void application_init(void)
+{
+    bc_radio_init();
+
+    bc_module_lcd_init(&_bc_module_lcd_framebuffer);
+
+    bc_module_encoder_init();
+    bc_module_encoder_set_event_handler(encoder_event_handler, NULL);
+
+    bc_tag_temperature_init(&temperature_tag, BC_I2C_I2C0, BC_TAG_TEMPERATURE_I2C_ADDRESS_ALTERNATE);
+    bc_tag_temperature_set_update_interval(&temperature_tag, 2000);
+    bc_tag_temperature_set_event_handler(&temperature_tag, temperature_tag_event_handler, NULL);
+}
+
+void application_task()
+{
+    static char str_temperature[10];
+
+    if (temperature.valid)
+    {
+        snprintf(str_temperature, sizeof(str_temperature), "%.1f \xb0" "C", temperature.value);
+    }
+    else
+    {
+        strncpy(str_temperature, "", sizeof(str_temperature));
+    }
+
+    bc_module_lcd_set_font(&Font);
+    bc_module_lcd_draw_string(10, 5, "Aktu\xe1ln\xed teplota");
+    bc_module_lcd_set_font(&FontBig);
+    bc_module_lcd_draw_string(15, 34, str_temperature);
+
+    bc_module_lcd_set_font(&Font);
+    bc_module_lcd_draw_string(5, 80, "Nastaven\xe1 teplota");
+
+    snprintf(str_temperature, sizeof(str_temperature), "%.1f \xb0" "C", set_temperature);
+    bc_module_lcd_draw_string(40, 100, str_temperature);
+
+    bc_module_lcd_update();
+
+    bc_scheduler_plan_current_relative(500);
+
+}
